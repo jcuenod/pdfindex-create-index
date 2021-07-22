@@ -6,6 +6,8 @@ I want an index of my pdf files that Zotero stores
 
 **Build the Index**
 
+Be sure to set the `root` variable in `config.json` to the root folder under which `pdfindex` should look for pdfs.
+
 ```
 node create-index.js
 ```
