@@ -5,33 +5,49 @@ const { getPdfText } = require("./get-pdf-text")
 const sqlite = require("better-sqlite3")
 const outputDb = new sqlite("./index.sqlite")
 
-const TABLE_NAME = "pdfs"
-const INSERT_LIMIT = 1
+const INSERT_LIMIT = 1000
+
+const PDF_TABLE_NAME = "metadata"
+const CONTENT_TABLE_NAME = "pages"
 
 outputDb.exec(`
-CREATE VIRTUAL TABLE IF NOT EXISTS ${TABLE_NAME} USING fts5(
-	name,
-	path,
-	size, 
+CREATE TABLE IF NOT EXISTS ${PDF_TABLE_NAME} (
+	name TEXT,
+	path TEXT,
+	size INTEGER
+)`)
+outputDb.exec(`
+CREATE INDEX IF NOT EXISTS lookup ON ${PDF_TABLE_NAME} (name, size)`)
+outputDb.exec(`
+CREATE VIRTUAL TABLE IF NOT EXISTS ${CONTENT_TABLE_NAME} USING fts5(
+	id,
+	page,
 	content
 )`)
 
 let fileData = []
 const insertData = row => {
 	fileData.push(row)
-	if (fileData.length >= INSERT_LIMIT) {
-		const toWrite = fileData.slice()
-		fileData = []
+	while (fileData.length >= INSERT_LIMIT) {
+		const toWrite = fileData.splice(0, INSERT_LIMIT)
 		writeToSql(toWrite)
 	}
 }
 
-
-
-const checkInsert = outputDb.prepare(`SELECT * FROM ${TABLE_NAME} WHERE name=? AND size=?`)
-const isInserted = ({name, size}) => {
-	const result = checkInsert.all(name, size)
-	return result.length > 0
+const selectPdfId = outputDb.prepare(
+	`SELECT rowid FROM ${PDF_TABLE_NAME} WHERE name=? AND size=?`
+)
+const insertPdfId = outputDb.prepare(
+	`INSERT INTO ${PDF_TABLE_NAME} VALUES (?, ?, ?)`
+)
+const getPdfId = ({ name, size }) => {
+	console.log(name, size)
+	const result = selectPdfId.get(name, size)
+	return result === undefined ? -1 : result.rowid
+}
+const createPdfId = ({ name, path, size }) => {
+	const info = insertPdfId.run(name, path, size)
+	return info.lastInsertRowid
 }
 
 console.log("Checking for pdfs, skipping those already inserted")
@@ -48,46 +64,54 @@ glob(config.root + "/**/*.pdf", {}, async (err, files) => {
 		const fileStats = fs.statSync(file)
 		const size = fileStats.size
 
-		if (isInserted({name, size})) continue
-		console.log({counter, name,path,size})
-
+		const preexistingid = getPdfId({ name, size })
+		// Already inserted
+		if (preexistingid > -1) continue
+		const pdfid = createPdfId({ name, path, size })
+		console.log(pdfid)
+		console.log({ counter, name, path, size })
 
 		const content = await getPdfText(path)
 
-		insertData([
-			name,
-			path,
-			size,
-			content
-		])
+		content.forEach((page, index) => {
+			insertData([pdfid, index, escapeSingleQuotes(page)])
+		})
 	}
 	console.log("Writing remaining entries")
 	writeToSql(fileData)
 })
 
-const escapeSingleQuotesIfString = value => typeof value === "string" ? value.replace(/''/g, "' '").replace(/'/g, "''") : value
+const escapeSingleQuotes = value =>
+	value.replace(/''/g, "' '").replace(/'/g, "''")
 
 // outputDb.exec(`
 // DROP TABLE IF EXISTS ${TABLE_NAME}`)
 // outputDb.exec(`
 // CREATE VIRTUAL TABLE ${TABLE_NAME} USING fts5(
-	// name,
-	// path,
-	// size, 
-	// content
+// name,
+// path,
+// size,
+// content
 // )`)
-const generateInsertStatement = rows => `
-INSERT INTO ${TABLE_NAME} VALUES (?,?,?,?)
+const singleInsertStatement = `
+INSERT INTO ${CONTENT_TABLE_NAME} VALUES (?,?,?)
 `
-	// ${rows.map(row => `(${row.map(value => `'${escapeSingleQuotesIfString(value)}'`)})`).join(",")}
+const limitInsertStatement = `
+INSERT INTO ${CONTENT_TABLE_NAME} VALUES ${Array.from(new Array(INSERT_LIMIT))
+	.map(_ => `(?,?,?)`)
+	.join(",")}
+`
+// ${rows.map(row => `(${row.map(value => `'${escapeSingleQuotesIfString(value)}'`)})`).join(",")}
 
-const stmt = outputDb.prepare(generateInsertStatement())
+const stmt = outputDb.prepare(singleInsertStatement)
+const limitStmt = outputDb.prepare(limitInsertStatement)
 const writeToSql = data => {
-	// const query = generateInsertStatement(data)
-	// console.log(query)
-	data.forEach(row => {
-		stmt.run(row)
-	})
+	if (data.length === INSERT_LIMIT) {
+		limitStmt.run(data.flat())
+	} else {
+		data.forEach(row => {
+			stmt.run(row)
+		})
+	}
 	console.log("Write!", data.length)
 }
-
