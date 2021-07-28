@@ -1,6 +1,8 @@
 # PDF Index
 
-I want an index of my pdf files that Zotero stores
+I want an index of my pdf files stored in Zotero. Other repositories that may be of interest include a [server](https://github.com/jcuenod/pdfindex-server) that responds to `/query?q=search terms` and a [client](https://github.com/jcuenod/pdfindex-client) that debounces requests to that server and displays results on the fly.
+
+See this blog post for more information about the project: https://jcuenod.github.io/bibletech/2021/07/26/full-text-search-for-pdfs/
 
 # Usage
 
